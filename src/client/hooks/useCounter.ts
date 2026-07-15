@@ -1,74 +1,124 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
   InitResponse,
-  IncrementResponse,
-  DecrementResponse,
+  VoteChoice,
+  VoteResponse,
+  VoteTotals,
 } from '../../shared/api';
 
-interface CounterState {
-  count: number;
+type GameState = {
   username: string | null;
   loading: boolean;
-}
+  submitting: boolean;
+  votes: VoteTotals;
+  userVote: VoteChoice | null;
+  error: string | null;
+};
+
+const emptyVotes: VoteTotals = {
+  restore: 0,
+  account: 0,
+  bot: 0,
+};
 
 export const useCounter = () => {
-  const [state, setState] = useState<CounterState>({
-    count: 0,
+  const [state, setState] = useState<GameState>({
     username: null,
     loading: true,
+    submitting: false,
+    votes: emptyVotes,
+    userVote: null,
+    error: null,
   });
-  const [postId, setPostId] = useState<string | null>(null);
 
-  // fetch initial data
   useEffect(() => {
-    const init = async () => {
+    const initialise = async () => {
       try {
-        const res = await fetch('/api/init');
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: InitResponse = await res.json();
-        if (data.type !== 'init') throw new Error('Unexpected response');
+        const response = await fetch('/api/init');
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data: InitResponse = await response.json();
+
         setState({
-          count: data.count,
           username: data.username,
           loading: false,
+          submitting: false,
+          votes: data.votes,
+          userVote: data.userVote,
+          error: null,
         });
-        setPostId(data.postId);
-      } catch (err) {
-        console.error('Failed to init counter', err);
-        setState((prev) => ({ ...prev, loading: false }));
+      } catch (error) {
+        console.error('THREAD ZERO initialization failed:', error);
+
+        setState((current) => ({
+          ...current,
+          loading: false,
+          error: 'Community memory is temporarily unavailable.',
+        }));
       }
     };
-    void init();
+
+    void initialise();
   }, []);
 
-  const update = useCallback(
-    async (action: 'increment' | 'decrement') => {
-      if (!postId) {
-        console.error('No postId – cannot update counter');
-        return;
-      }
-      try {
-        const res = await fetch(`/api/${action}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data: IncrementResponse | DecrementResponse = await res.json();
-        setState((prev) => ({ ...prev, count: data.count }));
-      } catch (err) {
-        console.error(`Failed to ${action}`, err);
-      }
-    },
-    [postId]
-  );
+  const submitVote = useCallback(async (choice: VoteChoice) => {
+    setState((current) => ({
+      ...current,
+      submitting: true,
+      error: null,
+    }));
 
-  const increment = useCallback(() => update('increment'), [update]);
-  const decrement = useCallback(() => update('decrement'), [update]);
+    try {
+      const response = await fetch('/api/vote', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ choice }),
+      });
+
+      const data = (await response.json()) as
+        VoteResponse | { message?: string };
+
+      if (!response.ok || !('type' in data) || data.type !== 'vote') {
+        throw new Error(
+          'message' in data && data.message
+            ? data.message
+            : `HTTP ${response.status}`
+        );
+      }
+
+      setState((current) => ({
+        ...current,
+        username: data.username,
+        submitting: false,
+        votes: data.votes,
+        userVote: data.userVote,
+        error: null,
+      }));
+
+      return data;
+    } catch (error) {
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'The timeline rejected this decision.';
+
+      setState((current) => ({
+        ...current,
+        submitting: false,
+        error: message,
+      }));
+
+      return null;
+    }
+  }, []);
 
   return {
     ...state,
-    increment,
-    decrement,
+    submitVote,
   } as const;
 };
