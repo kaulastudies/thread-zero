@@ -46,6 +46,6 @@
     "build": "vite build"
   },
   "dev": {
-    "subreddit": "thread_zero_dev"
+    "subreddit": "ThreadZeroGame"
   }
 }
