@@ -2,9 +2,12 @@ import './index.css';
 
 import { StrictMode, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import type { VoteChoice } from '../shared/api';
 import { useCounter } from './hooks/useCounter';
 
 type Tab = 'case' | 'vote' | 'timeline';
+
+type Role = 'Archivist' | 'Observer' | 'Decoder' | 'Witness';
 
 type Evidence = {
   id: string;
@@ -13,6 +16,14 @@ type Evidence = {
   summary: string;
   detail: string;
   status: 'available' | 'corrupted' | 'locked';
+  visibleTo?: Role[];
+};
+
+type Decision = {
+  id: VoteChoice;
+  title: string;
+  description: string;
+  risk: string;
 };
 
 const evidenceItems: Evidence[] = [
@@ -58,8 +69,9 @@ const evidenceItems: Evidence[] = [
     title: 'Encrypted Message',
     summary: 'Decoder access required.',
     detail:
-      'This evidence is locked to another investigator role. Share findings in the comments to reconstruct the full message.',
+      'THE ARCHIVE DID NOT RESET. IT LEARNED. The final checksum points directly to the moderator bot.',
     status: 'locked',
+    visibleTo: ['Decoder'],
   },
   {
     id: 'archive',
@@ -72,26 +84,24 @@ const evidenceItems: Evidence[] = [
   },
 ];
 
-const decisions = [
+const decisions: Decision[] = [
   {
     id: 'restore',
     title: 'Restore the deleted post',
     description: 'Recover the post removed before the current loop began.',
-    votes: 38,
     risk: 'High risk',
   },
   {
     id: 'account',
     title: 'Trace the missing account',
-    description: 'Follow the witness through archived comments and user records.',
-    votes: 51,
+    description:
+      'Follow the witness through archived comments and user records.',
     risk: 'Unknown',
   },
   {
     id: 'bot',
     title: 'Interrogate the moderator bot',
     description: 'Compare its memory against the corrupted moderator log.',
-    votes: 27,
     risk: 'Moderate risk',
   },
 ];
@@ -114,10 +124,44 @@ const timelineEvents = [
   },
   {
     loop: 'Loop 04',
-    choice: 'Decision in progress',
+    choice: 'Community decision in progress',
     result: 'Current timeline.',
   },
 ];
+
+const roleDetails: Record<
+  Role,
+  {
+    icon: string;
+    description: string;
+    privateClue: string;
+  }
+> = {
+  Archivist: {
+    icon: '🗃️',
+    description: 'You recognize records that survived earlier loops.',
+    privateClue:
+      'Private fragment: the archive checksum changed before the first reset.',
+  },
+  Observer: {
+    icon: '👁️',
+    description: 'You notice visual changes other investigators miss.',
+    privateClue:
+      'Private fragment: the red door appears only when the timer shows 02:17.',
+  },
+  Decoder: {
+    icon: '⌁',
+    description: 'Encrypted evidence E-05 is visible only to you.',
+    privateClue:
+      'Private fragment: the message says the archive learned from every loop.',
+  },
+  Witness: {
+    icon: '◉',
+    description: 'You remember a sentence the deleted account never posted.',
+    privateClue:
+      'Private fragment: “Do not restore me. Find who remembers tomorrow.”',
+  },
+};
 
 function formatTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600);
@@ -129,13 +173,29 @@ function formatTime(seconds: number): string {
     .join(':');
 }
 
+function getRole(username: string | null): Role {
+  const roles: Role[] = ['Archivist', 'Observer', 'Decoder', 'Witness'];
+  const identity = username ?? 'investigator';
+
+  const score = [...identity].reduce(
+    (total, character) => total + character.charCodeAt(0),
+    0
+  );
+
+  return roles[score % roles.length] ?? 'Archivist';
+}
+
 export const App = () => {
-  const { username, loading } = useCounter();
+  const { username, loading, submitting, votes, userVote, error, submitVote } =
+    useCounter();
 
   const [activeTab, setActiveTab] = useState<Tab>('case');
-  const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(null);
-  const [selectedDecision, setSelectedDecision] = useState<string | null>(null);
-  const [voteSubmitted, setVoteSubmitted] = useState(false);
+  const [selectedEvidence, setSelectedEvidence] = useState<Evidence | null>(
+    null
+  );
+  const [selectedDecision, setSelectedDecision] = useState<VoteChoice | null>(
+    null
+  );
   const [secondsRemaining, setSecondsRemaining] = useState(47 * 60 + 18);
 
   useEffect(() => {
@@ -146,28 +206,29 @@ export const App = () => {
     return () => window.clearInterval(timer);
   }, []);
 
-  const role = useMemo(() => {
-    const roles = ['Archivist', 'Observer', 'Decoder', 'Witness'];
-    const identity = username ?? 'investigator';
-    const score = [...identity].reduce(
-      (total, character) => total + character.charCodeAt(0),
-      0
-    );
+  const role = useMemo(() => getRole(username), [username]);
 
-    return roles[score % roles.length];
-  }, [username]);
+  const roleInfo = roleDetails[role];
 
-  const totalVotes =
-    decisions.reduce((total, decision) => total + decision.votes, 0) +
-    (voteSubmitted ? 1 : 0);
+  const voteSubmitted = userVote !== null;
+  const displayedDecision = userVote ?? selectedDecision;
 
-  const getVoteCount = (decisionId: string, votes: number) => {
-    return votes + (voteSubmitted && selectedDecision === decisionId ? 1 : 0);
+  const totalVotes = Math.max(1, votes.restore + votes.account + votes.bot);
+
+  const commitVote = async () => {
+    if (!selectedDecision || voteSubmitted || submitting) {
+      return;
+    }
+
+    await submitVote(selectedDecision);
   };
 
-  const submitVote = () => {
-    if (!selectedDecision || voteSubmitted) return;
-    setVoteSubmitted(true);
+  const isEvidenceLocked = (evidence: Evidence): boolean => {
+    if (evidence.status !== 'locked') {
+      return false;
+    }
+
+    return !(evidence.visibleTo ?? []).includes(role);
   };
 
   return (
@@ -191,6 +252,7 @@ export const App = () => {
             <div className="rounded-full border border-red-400/30 bg-red-500/10 px-3 py-1 text-[10px] font-semibold text-red-300">
               LOOP 04 / 07
             </div>
+
             <p className="mt-1 font-mono text-xs text-slate-300">
               {formatTime(secondsRemaining)}
             </p>
@@ -208,38 +270,51 @@ export const App = () => {
 
           <div className="p-4">
             <p className="text-xs text-slate-400">CASE 04-217</p>
+
             <h1 className="mt-1 text-2xl font-bold leading-tight">
               The post that never existed
             </h1>
+
             <p className="mt-3 text-sm leading-6 text-slate-300">
-              At 02:17, every member received the same deleted notification.
-              One account remembered what it said. That account no longer
-              exists.
+              At 02:17, every member received the same deleted notification. One
+              account remembered what it said. That account no longer exists.
             </p>
           </div>
         </section>
 
-        <section className="mt-4 flex items-center justify-between rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
-          <div>
-            <p className="text-[10px] font-semibold tracking-[0.2em] text-cyan-300">
-              YOUR INVESTIGATION ROLE
-            </p>
-            <p className="mt-1 text-lg font-bold">
-              {loading ? 'Assigning…' : role}
-            </p>
-            <p className="mt-1 text-xs text-slate-400">
-              u/{username ?? 'investigator'}
-            </p>
+        <section className="mt-4 rounded-2xl border border-cyan-400/20 bg-cyan-400/5 p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[10px] font-semibold tracking-[0.2em] text-cyan-300">
+                YOUR INVESTIGATION ROLE
+              </p>
+
+              <p className="mt-1 text-lg font-bold">
+                {loading ? 'Assigning…' : role}
+              </p>
+
+              <p className="mt-1 text-xs text-slate-400">
+                u/{username ?? 'investigator'}
+              </p>
+
+              <p className="mt-2 text-[11px] leading-5 text-cyan-100/70">
+                {roleInfo.description}
+              </p>
+            </div>
+
+            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/10 text-2xl">
+              {roleInfo.icon}
+            </div>
           </div>
 
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-cyan-300/20 bg-cyan-300/10 text-2xl">
-            {role === 'Archivist'
-              ? '🗃️'
-              : role === 'Observer'
-                ? '👁️'
-                : role === 'Decoder'
-                  ? '⌁'
-                  : '◉'}
+          <div className="mt-3 rounded-xl border border-cyan-300/10 bg-black/20 p-3">
+            <p className="text-[10px] font-semibold tracking-[0.16em] text-cyan-300">
+              ROLE-ONLY MEMORY
+            </p>
+
+            <p className="mt-1 text-xs leading-5 text-slate-300">
+              {roleInfo.privateClue}
+            </p>
           </div>
         </section>
 
@@ -250,26 +325,27 @@ export const App = () => {
                 <p className="text-xs font-semibold tracking-[0.18em] text-slate-400">
                   EVIDENCE BOARD
                 </p>
+
                 <h2 className="mt-1 text-lg font-bold">
                   Reconstruct the missing event
                 </h2>
               </div>
+
               <p className="text-xs text-slate-500">4 / 6 found</p>
             </div>
 
             <div className="mt-3 grid grid-cols-2 gap-3">
               {evidenceItems.map((evidence) => {
-                const isLocked = evidence.status === 'locked';
+                const locked = isEvidenceLocked(evidence);
 
                 return (
                   <button
                     key={evidence.id}
                     type="button"
-                    onClick={() => {
-                      if (!isLocked) setSelectedEvidence(evidence);
-                    }}
+                    disabled={locked}
+                    onClick={() => setSelectedEvidence(evidence)}
                     className={`min-h-36 rounded-2xl border p-3 text-left transition ${
-                      isLocked
+                      locked
                         ? 'cursor-not-allowed border-white/5 bg-white/[0.025] opacity-45'
                         : evidence.status === 'corrupted'
                           ? 'border-red-400/25 bg-red-500/5 hover:border-red-300/50'
@@ -280,8 +356,9 @@ export const App = () => {
                       <span className="font-mono text-[10px] text-slate-500">
                         {evidence.code}
                       </span>
+
                       <span className="text-sm">
-                        {isLocked
+                        {locked
                           ? '🔒'
                           : evidence.status === 'corrupted'
                             ? '⚠'
@@ -290,8 +367,11 @@ export const App = () => {
                     </div>
 
                     <p className="mt-5 text-sm font-bold">{evidence.title}</p>
+
                     <p className="mt-2 text-xs leading-5 text-slate-400">
-                      {evidence.summary}
+                      {locked
+                        ? 'This fragment belongs to another investigator role.'
+                        : evidence.summary}
                     </p>
                   </button>
                 );
@@ -302,12 +382,14 @@ export const App = () => {
               <p className="text-[10px] font-semibold tracking-[0.18em] text-violet-300">
                 COMMUNITY SIGNAL
               </p>
+
               <p className="mt-2 text-sm font-semibold">
-                63 investigators mentioned a red door.
-              </p>
-              <p className="mt-1 text-xs leading-5 text-slate-400">
-                Compare your evidence with theories in the Reddit comments.
                 No investigator can see the full case alone.
+              </p>
+
+              <p className="mt-1 text-xs leading-5 text-slate-400">
+                Share your role-only memory and evidence discoveries in the
+                Reddit comments. Other roles may hold the missing fragment.
               </p>
             </div>
           </section>
@@ -318,36 +400,42 @@ export const App = () => {
             <p className="text-xs font-semibold tracking-[0.18em] text-slate-400">
               COMMUNITY DECISION
             </p>
+
             <h2 className="mt-1 text-lg font-bold">What becomes canon?</h2>
+
             <p className="mt-2 text-sm leading-6 text-slate-400">
-              The winning decision changes the next timeline for everyone.
+              Every Reddit account receives one permanent vote in this timeline.
             </p>
 
             <div className="mt-4 space-y-3">
               {decisions.map((decision) => {
-                const votes = getVoteCount(decision.id, decision.votes);
-                const percentage = Math.round((votes / totalVotes) * 100);
-                const isSelected = selectedDecision === decision.id;
+                const decisionVotes = votes[decision.id];
+                const percentage = Math.round(
+                  (decisionVotes / totalVotes) * 100
+                );
+                const selected = displayedDecision === decision.id;
 
                 return (
                   <button
                     key={decision.id}
                     type="button"
-                    disabled={voteSubmitted}
+                    disabled={voteSubmitted || submitting}
                     onClick={() => setSelectedDecision(decision.id)}
                     className={`w-full rounded-2xl border p-4 text-left transition ${
-                      isSelected
+                      selected
                         ? 'border-red-400 bg-red-500/10'
                         : 'border-white/10 bg-white/[0.04] hover:border-white/25'
-                    }`}
+                    } disabled:cursor-not-allowed`}
                   >
                     <div className="flex items-start justify-between gap-3">
                       <div>
                         <p className="text-sm font-bold">{decision.title}</p>
+
                         <p className="mt-1 text-xs leading-5 text-slate-400">
                           {decision.description}
                         </p>
                       </div>
+
                       <span className="whitespace-nowrap text-[10px] text-red-300">
                         {decision.risk}
                       </span>
@@ -361,7 +449,7 @@ export const App = () => {
                     </div>
 
                     <div className="mt-2 flex justify-between text-[10px] text-slate-500">
-                      <span>{votes} votes</span>
+                      <span>{decisionVotes} votes</span>
                       <span>{percentage}%</span>
                     </div>
                   </button>
@@ -371,18 +459,26 @@ export const App = () => {
 
             <button
               type="button"
-              disabled={!selectedDecision || voteSubmitted}
-              onClick={submitVote}
+              disabled={!selectedDecision || voteSubmitted || submitting}
+              onClick={() => void commitVote()}
               className="mt-4 w-full rounded-xl bg-red-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-red-400 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {voteSubmitted
-                ? 'Decision recorded in this timeline'
-                : 'Commit community decision'}
+                ? 'Decision permanently recorded'
+                : submitting
+                  ? 'Writing into community memory…'
+                  : 'Commit community decision'}
             </button>
 
             {voteSubmitted && (
               <div className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-3 text-center text-xs text-emerald-300">
-                Your vote will survive until the timeline resolves.
+                Your vote is stored in shared Reddit community memory.
+              </div>
+            )}
+
+            {error && (
+              <div className="mt-3 rounded-xl border border-red-400/20 bg-red-400/5 p-3 text-center text-xs text-red-300">
+                {error}
               </div>
             )}
           </section>
@@ -393,32 +489,38 @@ export const App = () => {
             <p className="text-xs font-semibold tracking-[0.18em] text-slate-400">
               COMMUNITY MEMORY
             </p>
+
             <h2 className="mt-1 text-lg font-bold">Previous timelines</h2>
 
             <div className="mt-4 space-y-3">
-              {timelineEvents.map((event, index) => (
-                <div
-                  key={event.loop}
-                  className={`rounded-2xl border p-4 ${
-                    index === timelineEvents.length - 1
-                      ? 'border-cyan-400/25 bg-cyan-400/5'
-                      : 'border-white/10 bg-white/[0.035]'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <p className="font-mono text-xs text-slate-400">
-                      {event.loop}
+              {timelineEvents.map((event, index) => {
+                const current = index === timelineEvents.length - 1;
+
+                return (
+                  <div
+                    key={event.loop}
+                    className={`rounded-2xl border p-4 ${
+                      current
+                        ? 'border-cyan-400/25 bg-cyan-400/5'
+                        : 'border-white/10 bg-white/[0.035]'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <p className="font-mono text-xs text-slate-400">
+                        {event.loop}
+                      </p>
+
+                      <span className="text-xs">{current ? '●' : '×'}</span>
+                    </div>
+
+                    <p className="mt-2 text-sm font-bold">{event.choice}</p>
+
+                    <p className="mt-1 text-xs leading-5 text-slate-400">
+                      {event.result}
                     </p>
-                    <span className="text-xs">
-                      {index === timelineEvents.length - 1 ? '●' : '×'}
-                    </span>
                   </div>
-                  <p className="mt-2 text-sm font-bold">{event.choice}</p>
-                  <p className="mt-1 text-xs leading-5 text-slate-400">
-                    {event.result}
-                  </p>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </section>
         )}
@@ -427,9 +529,21 @@ export const App = () => {
       <nav className="fixed bottom-0 left-0 right-0 z-20 border-t border-white/10 bg-[#070a10]/95 px-3 py-2 backdrop-blur">
         <div className="mx-auto grid max-w-md grid-cols-3 gap-2">
           {[
-            { id: 'case' as Tab, label: 'Evidence', icon: '◇' },
-            { id: 'vote' as Tab, label: 'Decision', icon: '◉' },
-            { id: 'timeline' as Tab, label: 'Timeline', icon: '⌁' },
+            {
+              id: 'case' as Tab,
+              label: 'Evidence',
+              icon: '◇',
+            },
+            {
+              id: 'vote' as Tab,
+              label: 'Decision',
+              icon: '◉',
+            },
+            {
+              id: 'timeline' as Tab,
+              label: 'Timeline',
+              icon: '⌁',
+            },
           ].map((item) => (
             <button
               key={item.id}
@@ -442,6 +556,7 @@ export const App = () => {
               }`}
             >
               <span className="block text-base">{item.icon}</span>
+
               <span className="mt-1 block text-[10px] font-semibold">
                 {item.label}
               </span>
@@ -457,6 +572,7 @@ export const App = () => {
               <span className="font-mono text-xs text-cyan-300">
                 {selectedEvidence.code}
               </span>
+
               <button
                 type="button"
                 onClick={() => setSelectedEvidence(null)}
@@ -466,9 +582,8 @@ export const App = () => {
               </button>
             </div>
 
-            <h3 className="mt-4 text-xl font-bold">
-              {selectedEvidence.title}
-            </h3>
+            <h3 className="mt-4 text-xl font-bold">{selectedEvidence.title}</h3>
+
             <p className="mt-3 text-sm leading-6 text-slate-300">
               {selectedEvidence.detail}
             </p>
@@ -477,8 +592,9 @@ export const App = () => {
               <p className="text-xs font-semibold text-amber-300">
                 Share this clue
               </p>
+
               <p className="mt-1 text-xs leading-5 text-slate-400">
-                Other investigator roles may see evidence that contradicts
+                Another investigator role may hold evidence that contradicts
                 yours. Compare findings in the Reddit comments.
               </p>
             </div>

@@ -1,18 +1,20 @@
+export type VoteChoice = 'restore' | 'account' | 'bot';
+
+export type VoteTotals = Record<VoteChoice, number>;
+
 export type InitResponse = {
   type: 'init';
   postId: string;
-  count: number;
   username: string;
+  votes: VoteTotals;
+  userVote: VoteChoice | null;
 };
 
-export type IncrementResponse = {
-  type: 'increment';
+export type VoteResponse = {
+  type: 'vote';
   postId: string;
-  count: number;
-};
-
-export type DecrementResponse = {
-  type: 'decrement';
-  postId: string;
-  count: number;
+  username: string;
+  votes: VoteTotals;
+  userVote: VoteChoice;
+  recorded: boolean;
 };
