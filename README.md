@@ -66,3 +66,15 @@ Each player receives a user-specific vote key:
 
 ```text
 thread-zero:{postId}:user:{username}:vote
+
+<!-- RAMA-SPONSORS-START -->
+
+## Support continued development
+
+If this project is useful to you, you can support **Rama Chandra's independent technical work** through GitHub Sponsors:
+
+https://github.com/sponsors/kaulastudies
+
+Sponsorship helps fund public development, AI and evaluation experiments, testing, documentation, hosting and maintenance. It does not automatically include consulting, custom development, confidential data access or exclusive IP rights.
+
+<!-- RAMA-SPONSORS-END -->
