@@ -66,6 +66,7 @@ Each player receives a user-specific vote key:
 
 ```text
 thread-zero:{postId}:user:{username}:vote
+```
 
 <!-- RAMA-SPONSORS-START -->
 
